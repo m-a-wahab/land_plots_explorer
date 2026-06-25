@@ -1,0 +1,324 @@
+@{
+    ViewData["Title"] = "مستكشف الأراضي";
+    var rentStatus = ViewBag.RentStatus as string ?? "";
+    var rentSummary = ViewBag.RentSummary as List<LandPlotsExplorer.Models.RentSummaryItem> ?? new List<LandPlotsExplorer.Models.RentSummaryItem>();
+    var districts = ViewBag.Districts as List<string> ?? new List<string>();
+    var mainActivities = ViewBag.MainActivities as List<string> ?? new List<string>();
+    var subActivities = ViewBag.SubActivities as List<string> ?? new List<string>();
+    var minArea = ViewBag.MinArea as double? ?? 0;
+    var maxArea = ViewBag.MaxArea as double? ?? 0;
+}
+
+<div class="home-page" dir="rtl">
+
+    <div class="dashboard-section">
+        <div class="dashboard-container">
+            <div class="dashboard-header">
+                <h1>لوحة تحكم الأراضي</h1>
+                <p class="subtitle">إجمالي الأراضي: @rentSummary.Sum(s => s.Count) قطعة</p>
+            </div>
+            <div class="cards-grid">
+                @foreach (var item in rentSummary)
+                {
+                    <button class="summary-card @(item.Key == rentStatus ? "active" : "")"
+                            style="--card-color: @item.Color"
+                            onclick="filterByCard(this, '@Html.Raw(item.Key)')">
+                        <div class="card-icon">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                <polyline points="9 22 9 12 15 12 15 22"/>
+                            </svg>
+                        </div>
+                        <div class="card-content">
+                            <span class="card-label">@item.Label</span>
+                            <span class="card-count">@item.Count</span>
+                            <span class="card-unit">قطعة</span>
+                        </div>
+                        <div class="card-arrow">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="9 18 15 12 9 6"/>
+                            </svg>
+                        </div>
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="map-section">
+        <aside class="filters-sidebar" id="filtersSidebar">
+            <div class="sidebar-header">
+                <h2>تصفية الأراضي</h2>
+                <button class="toggle-sidebar-btn" id="toggleSidebar" title="إخفاء">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                </button>
+            </div>
+
+            <form id="filterForm">
+                <input type="hidden" id="rentStatus" value="@rentStatus" />
+
+                <div class="filter-group">
+                    <label for="district">الحي</label>
+                    <select id="district" name="disName" class="filter-select">
+                        <option value="">الكل</option>
+                        @foreach (var d in districts)
+                        {
+                            <option value="@d">@d</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="mainActivity">النشاط الرئيسي</label>
+                    <select id="mainActivity" name="mainActivity" class="filter-select">
+                        <option value="">الكل</option>
+                        @foreach (var a in mainActivities)
+                        {
+                            <option value="@a">@a</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="subActivity">النشاط الفرعي</label>
+                    <select id="subActivity" name="subActivity" class="filter-select">
+                        <option value="">الكل</option>
+                        @foreach (var a in subActivities)
+                        {
+                            <option value="@a">@a</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>المساحة (م²)</label>
+                    <div class="range-inputs">
+                        <input type="number" id="minArea" name="minArea" placeholder="من" value="" min="@minArea" max="@maxArea" step="1" />
+                        <span>-</span>
+                        <input type="number" id="maxArea" name="maxArea" placeholder="إلى" value="" min="@minArea" max="@maxArea" step="1" />
+                    </div>
+                    <div class="range-labels">
+                        <small>الحد الأدنى: @Math.Round(minArea, 2)</small>
+                        <small>الحد الأقصى: @Math.Round(maxArea, 2)</small>
+                    </div>
+                </div>
+
+                <div class="filter-actions">
+                    <button type="submit" class="btn btn-primary">تطبيق</button>
+                    <button type="button" class="btn btn-secondary" id="resetFilters">إعادة تعيين</button>
+                </div>
+            </form>
+
+            <div class="results-count">
+                <span>عدد النتائج: <strong id="resultsCount">0</strong></span>
+            </div>
+        </aside>
+
+        <div class="map-container">
+            <button class="show-sidebar-btn" id="showSidebar" title="إظهار الفلاتر" style="display:none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="9 18 15 12 9 6"/>
+                </svg>
+            </button>
+            <div id="map"></div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    const RENT_COLORS = {
+        "مؤجر": "#db0f0f",
+        "غير مؤجر": "#22c55e",
+        "تم احالة الاشراف للزراعة": "#f59e0b",
+        "قيد الطرح": "#1512c5",
+        "": "#6b7280"
+    };
+
+    let map;
+    let polygons = [];
+    let infoWindow;
+
+    window.initMap = function initMap() {
+        const mapDiv = document.getElementById('map');
+        try {
+            map = new google.maps.Map(mapDiv, {
+                zoom: 14,
+                center: { lat: 30.99, lng: 40.95 },
+                mapTypeId: google.maps.MapTypeId.ROADMAP,
+                mapTypeControl: true,
+                mapTypeControlOptions: {
+                    style: google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+                    position: google.maps.ControlPosition.TOP_LEFT
+                }
+            });
+            infoWindow = new google.maps.InfoWindow();
+            loadPlots();
+        } catch (error) {
+            console.error('Error initializing map:', error);
+        }
+    }
+
+    function getPolygonColor(rentStatus) {
+        return RENT_COLORS[rentStatus] || RENT_COLORS[''] || '#6b7280';
+    }
+
+    function filterByCard(cardEl, rentKey) {
+        document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+        cardEl.classList.add('active');
+        document.getElementById('rentStatus').value = rentKey;
+        document.getElementById('district').value = '';
+        document.getElementById('mainActivity').value = '';
+        document.getElementById('subActivity').value = '';
+        document.getElementById('minArea').value = '';
+        document.getElementById('maxArea').value = '';
+        loadPlots();
+    }
+
+    function loadPlots() {
+        clearPolygons();
+
+        const rentStatus = document.getElementById('rentStatus').value;
+        const disName = document.getElementById('district').value;
+        const mainActivity = document.getElementById('mainActivity').value;
+        const subActivity = document.getElementById('subActivity').value;
+        const minArea = document.getElementById('minArea').value;
+        const maxArea = document.getElementById('maxArea').value;
+
+        const hasFilters = disName || mainActivity || subActivity || minArea || maxArea;
+
+        let url, options;
+
+        if (hasFilters) {
+            url = '/api/plots/filter';
+            options = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    rentStatus: rentStatus || null,
+                    disName: disName || null,
+                    mainActivity: mainActivity || null,
+                    subActivity: subActivity || null,
+                    minArea: minArea ? parseFloat(minArea) : null,
+                    maxArea: maxArea ? parseFloat(maxArea) : null
+                })
+            };
+        } else {
+            url = rentStatus ? `/api/plots?rent=${encodeURIComponent(rentStatus)}` : '/api/plots';
+            options = { method: 'GET' };
+        }
+
+        fetch(url, options)
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('resultsCount').textContent = data.length;
+                renderPolygons(data);
+            })
+            .catch(err => console.error('Error loading plots:', err));
+    }
+
+    function clearPolygons() {
+        polygons.forEach(p => p.setMap(null));
+        polygons = [];
+    }
+
+    function renderPolygons(plots) {
+        plots.forEach(plot => {
+            if (!plot.rings || plot.rings.length === 0) return;
+
+            const color = getPolygonColor(plot.rent_1);
+
+            plot.rings.forEach(ring => {
+                const coords = ring.map(c => ({ lat: c[1], lng: c[0] }));
+
+                const polygon = new google.maps.Polygon({
+                    paths: coords,
+                    strokeColor: color,
+                    strokeOpacity: 0.8,
+                    strokeWeight: 2,
+                    fillColor: color,
+                    fillOpacity: 0.35
+                });
+
+                polygon.setMap(map);
+
+                polygon.addListener('click', (event) => {
+                    const isQidAlTarh = plot.rent_1 === 'قيد الطرح';
+
+                    function formatEpochDate(ms) {
+                        if (!ms) return '-';
+                        return new Date(ms).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' });
+                    }
+
+                    const content = isQidAlTarh ? `
+                        <div class="info-window" dir="rtl">
+                            <h3>قطعة أرض</h3>
+                            <table>
+                        <tr><td colspan="2" style="background:#1512c520;font-weight:bold;padding:6px 8px;border-radius:4px;">تفاصيل الفرصة</td></tr>
+                        <tr><td><strong>اسم الموقع:</strong></td><td>${plot.name || '-'}</td></tr>
+                        <tr><td><strong>النشاط:</strong></td><td>${plot.activity || '-'}</td></tr>
+                        <tr><td><strong>المساحة المطروحة:</strong></td><td>${plot.area ? plot.area.toFixed(2) + ' م²' : '-'}</td></tr>
+                        <tr><td><strong>سعر كراسة الشروط:</strong></td><td>${plot.buckletPrice ? plot.buckletPrice.toLocaleString('ar-SA') + ' ريال' : '-'}</td></tr>
+                        <tr><td><strong>مدة العقد:</strong></td><td>${plot.contractPeriod || '-'}</td></tr>
+                        <tr><td><strong>رقم الفرصة:</strong></td><td>${plot.forsaNumber || '-'}</td></tr>
+                        <tr><td><strong>تاريخ الإعلان:</strong></td><td>${formatEpochDate(plot.advertiseDate)}</td></tr>
+                        <tr><td><strong>تاريخ فتح المظاريف:</strong></td><td>${formatEpochDate(plot.openEnvelopesDate)}</td></tr>
+                        ${plot.forusLink ? `<tr><td colspan="2" style="text-align:center"><a href="${plot.forusLink}" target="_blank" rel="noopener" style="color:#1512c5;text-decoration:underline">رابط فرصة فرص</a></td></tr>` : ''}
+                        </table>
+                        </div>`
+                       :
+                    `<div class="info-window" dir="rtl">
+                            <h3>قطعة أرض</h3>
+                            <table>
+                                <tr><td><strong>رقم القطعة:</strong></td><td>${plot.objectid}</td></tr>
+                                <tr><td><strong>الحي:</strong></td><td>${plot.dis_nam_1 || '-'}</td></tr>
+                                <tr><td><strong>رقم المخطط:</strong></td><td>${plot.plan_Num_1 || '-'}</td></tr>
+                                <tr><td><strong>الحالة:</strong></td><td>${plot.rent_1 || 'غير محدد'}</td></tr>
+                                <tr><td><strong>النشاط الرئيسي:</strong></td><td>${plot.main_act_1 || '-'}</td></tr>
+                                <tr><td><strong>النشاط الفرعي:</strong></td><td>${plot.sub_acti_1 || '-'}</td></tr>
+                                <tr><td><strong>الموقع:</strong></td><td>${plot.location_1 || '-'}</td></tr>
+                                <tr><td><strong>المساحة:</strong></td><td>${plot.shape_Area ? plot.shape_Area.toFixed(2) + ' م²' : '-'}</td></tr>
+                                <tr><td><strong>ملاحظات:</strong></td><td>${plot.notes_1 || '-'}</td></tr>
+                            </table>
+                        </div>`;
+
+                    infoWindow.setContent(content);
+                    infoWindow.setPosition(event.latLng);
+                    infoWindow.open(map);
+                });
+
+                polygons.push(polygon);
+            });
+        });
+    }
+
+    document.getElementById('filterForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        loadPlots();
+    });
+
+    document.getElementById('resetFilters').addEventListener('click', () => {
+        document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+        document.getElementById('rentStatus').value = '';
+        document.getElementById('district').value = '';
+        document.getElementById('mainActivity').value = '';
+        document.getElementById('subActivity').value = '';
+        document.getElementById('minArea').value = '';
+        document.getElementById('maxArea').value = '';
+        loadPlots();
+    });
+
+    document.getElementById('toggleSidebar').addEventListener('click', () => {
+        document.getElementById('filtersSidebar').classList.add('collapsed');
+        document.getElementById('showSidebar').style.display = 'flex';
+    });
+
+    document.getElementById('showSidebar').addEventListener('click', () => {
+        document.getElementById('filtersSidebar').classList.remove('collapsed');
+        document.getElementById('showSidebar').style.display = 'none';
+    });
+</script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=@ViewBag.GoogleMapsApiKey&callback=initMap"></script>
+}
