@@ -1,211 +1,137 @@
 🧠 Project Overview
-A .NET Web Application that visualizes land plots from a JSON dataset (~6000 records) on Google Maps, with filtering and categorization based on rental status.
+A static site that visualizes land plots from a JSON dataset on Google Maps, with
+filtering and categorization by rental status.
 
-The system should:
-Load and process plots.json
-Aggregate plots by rent_1
-Display summary cards
-Render polygons on Google Maps
-Provide filtering capabilities
+Originally an ASP.NET Core MVC app; converted to static HTML/CSS/JS. The backend
+collapsed into a build step because nothing was ever dynamic — every endpoint was
+a pure function of a file that never changes at runtime.
 
 🏗️ Tech Stack
-Backend
-ASP.NET Core (MVC) C#
-System.Text.Json (for JSON parsing)
-ProjNet (UTM→WGS84 coordinate conversion)
-Frontend
-HTML, CSS, JavaScript
-Google Maps JavaScript API
-Bootstrap (layout)
+Build (one-time, Node)
+  proj4 — UTM zone 37N → WGS84 projection
+Runtime (browser only)
+  Plain HTML, CSS, ES modules — no framework, no Bootstrap, no jQuery
+  Google Maps JavaScript API
 
 📁 Project Structure
-/LandPlotsExplorer
- ├── Controllers/
- │    ├── Api/PlotsApiController.cs
- │    └── HomeController.cs
- ├── Services/
- │    └── PlotService.cs
- ├── Models/
- │    └── Plot.cs
- ├── wwwroot/
- │    ├── js/
- │    └── css/
- ├── Views/
- │    └── Home/Index.cshtml   (single page: dashboard + map)
- ├── Data/
- │    └── plots.json
- └── Program.cs
+/land_plots_explorer
+ ├── Data/plots.json          # 41 MB source, UTM 37N. Build input only.
+ ├── tools/
+ │    ├── build-data.mjs      # Data/plots.json -> dist/data/*.json
+ │    └── test-map.html       # map.js harness against a stubbed Maps API
+ ├── dist/                    # the deployable site
+ │    ├── index.html
+ │    ├── css/site.css
+ │    ├── js/config.js        # API key + map defaults
+ │    ├── js/data.js          # loads the artifacts
+ │    ├── js/filters.js       # pure, DOM-free filter predicates
+ │    ├── js/map.js           # polygons + info windows
+ │    ├── js/ui.js            # cards + dropdowns
+ │    ├── js/app.js           # bootstrap, state, wiring
+ │    └── data/               # build output (committed)
+ ├── desCards/                # 47 Arabic PDFs, not referenced by any code
+ └── package.json             # build tooling only
 
 📦 Data Handling
-Input File
-File: Data/plots.json
-Contains ~6000 plot records (PlotFeatureSet format with a `features` array)
-Each record includes:
-attributes
-geometry.rings (UTM Zone 37N coordinates → converted to WGS84 on load)
+`npm run build:data` reads Data/plots.json and emits:
 
-Model Classes (Models/Plot.cs)
-class Plot
-{
-    public Attributes Attributes { get; set; }
-    public Geometry Geometry { get; set; }
-}
+  dist/data/plots.json     4592 records, 1.7 MB (~277 KB gzipped)
+  dist/data/meta.json      rent summary, dropdown lists, area range, anomalies
+  dist/data/unmapped.json  the 47 records with no coordinates at all
 
-class Attributes
-{
-    public int OBJECTID { get; set; }
-    public string PLAN_NUM_1 { get; set; }
-    public string parcel_n_12 { get; set; }
-    public string dis_nam_1 { get; set; }
-    public string plan_nam_1 { get; set; }
-    public double? x_12 { get; set; }       // fallback longitude (WGS84)
-    public double? y_23 { get; set; }       // fallback latitude (WGS84)
-    public string? rent_1 { get; set; }
-    public string? main_act_1 { get; set; }
-    public string? sub_acti_1 { get; set; }
-    public string? location_1 { get; set; }
-    public string? site_inf_1 { get; set; }
-    public string? municipa_1 { get; set; }
-    public string? property_1 { get; set; }
-    public string? notes_1 { get; set; }
-    public double? Shape_Area { get; set; }
+The build:
+  - strips the UTF-8 BOM (present in the source; hard-fails JSON.parse otherwise)
+  - drops "تم احالة الاشراف للزراعة" (6726 -> 4592 records)
+  - projects all 30128 ring points to WGS84 at build time, rounded to 6 decimals
+  - keeps 9 core + 9 tender fields out of 63; omits empty and whitespace-only values
+  - preserves EXACT source field names (OBJECTID, PLAN_NUM_1, Shape_Area)
 
-    // قيد الطرح exclusive fields (tender/auction data)
-    public string? name { get; set; }
-    public string? activity { get; set; }
-    public long? area { get; set; }
-    public double? buckletPrice { get; set; }
-    public string? contractPeriod { get; set; }
-    public string? forsaNumber { get; set; }
-    public string? forusLink { get; set; }
-    public long? advertiseDate { get; set; }      // epoch ms
-    public long? openEnvelopesDate { get; set; }  // epoch ms
-}
+Field naming: the .NET API serialized these inconsistently (`objectid`,
+`plaN_NUM_1`, `shape_Area`), and the old template read names that did not match —
+so PLAN_NUM_1 and notes_1 silently rendered blank for every plot. The build owns
+the contract now; there is exactly one spelling of each field.
 
-class Geometry
-{
-    public List<List<List<double>>> rings { get; set; }
-}
-
-class PlotDto       // serialized to client; includes all Attributes fields + converted rings
-class FilterCriteria
-class RentSummaryItem
-class PlotFeatureSet   // top-level JSON wrapper
-
-⚙️ Core Services
-PlotService (Singleton)
-
-Responsibilities:
-Load JSON once on startup (singleton)
-Filter out "تم احالة الاشراف للزراعة" records on load
-Cache data in memory
-Convert UTM rings to WGS84 in ToDto()
-Provide querying methods:
-  List<Plot> GetAllPlots();
-  List<RentSummaryItem> GetRentStatistics();
-  List<Plot> GetPlotsByRent(string rentStatus);
-  List<Plot> FilterPlots(FilterCriteria criteria);
-  PlotDto ToDto(Plot plot);   // converts geometry + maps all fields including قيد الطرح extras
-  GetDistricts(), GetMainActivities(), GetSubActivities()
-  GetMinArea(), GetMaxArea()
+Tripwires: the build asserts wkid 32637, 4592 records, the per-rent counts, tender
+field presence, and a bounding box on projected coordinates. It fails loudly
+rather than emitting bad data.
 
 rent_1 Labels & Colors:
-  مؤجر         → "مستثمر"      #db0f0f
-  غير مؤجر     → "غير مستثمر"  #22c55e
-  تم احالة الاشراف للزراعة → "نفع عام" #f59e0b  (filtered out on load, not shown)
-  قيد الطرح    → "قيد الطرح"   #1512c5
+  مؤجر         → "مستثمر"      #db0f0f   (1964)
+  غير مؤجر     → "غير مستثمر"  #22c55e   (2584)
+  قيد الطرح    → "قيد الطرح"   #1512c5   (44)
+  تم احالة الاشراف للزراعة → "نفع عام"  #f59e0b  (filtered out at build)
   (empty)      → "Unknown"     #6b7280
 
-🏠 Single Page: Home (/)
-The app is a single-page layout with no navbar. HomeController.Index() serves everything.
+🏠 Single Page
+No navbar; fills the viewport.
+  1. Dashboard (flex-shrink: 0) — title, total count, one card per rent category.
+     Clicking a card filters the map in place; the active card gets a coloured ring.
+     Clicking the active card again clears the filter.
+  2. Map (flex: 1) — collapsible filters sidebar on the right, map fills the rest.
 
-Layout (top to bottom, full viewport height):
-1. Dashboard section (flex-shrink: 0)
-   - Title "لوحة تحكم الأراضي" + total plots count
-   - Responsive cards grid (one card per rent_1 category)
-   - Clicking a card filters the map in-place (no navigation); active card gets a colored ring
-2. Map section (flex: 1, fills remaining height)
-   - Collapsible filters sidebar (right side)
-   - Google Map (fills remaining width)
-
-HomeController passes to View:
-  ViewBag.RentStatus      — optional ?rent= query param (pre-selects a card)
-  ViewBag.RentSummary     — List<RentSummaryItem>
-  ViewBag.Districts       — List<string>
-  ViewBag.MainActivities  — List<string>
-  ViewBag.SubActivities   — List<string>
-  ViewBag.MinArea / MaxArea
-  ViewBag.GoogleMapsApiKey
+Deep links: `?rent=<value>` preselects a card. The value is validated against
+meta.rentSummary, so an unknown value degrades to no filter.
 
 🗺️ Map
-Initialize map centered at { lat: 30.99, lng: 40.95 }, zoom 14
-Convert rings → google.maps.Polygon (UTM→WGS84 done server-side in ToDto)
-Color polygons by rent_1 using RENT_COLORS map
+Centered at { lat: 30.99, lng: 40.95 }, zoom 14.
+Polygons are built once and toggled with setVisible() on filter changes — the
+.NET version destroyed and rebuilt ~4600 Polygon objects per interaction.
 
 📌 Polygon Info Window (on click)
-Shows for all plots:
-  رقم القطعة (OBJECTID)
-  الحي (dis_nam_1)
-  رقم المخطط (PLAN_NUM_1)
-  الحالة (rent_1)
-  النشاط الرئيسي (main_act_1)
-  النشاط الفرعي (sub_acti_1)
-  الموقع (location_1)
-  المساحة (Shape_Area)
-  ملاحظات (notes_1)
+Shown for ALL plots:
+  رقم القطعة (OBJECTID), الحي (dis_nam_1), رقم المخطط (PLAN_NUM_1),
+  الحالة (rent_1), النشاط الرئيسي (main_act_1), النشاط الفرعي (sub_acti_1),
+  الموقع (location_1), المساحة (Shape_Area), ملاحظات (notes_1)
 
-Additional section shown ONLY for rent_1 === 'قيد الطرح':
-  اسم الموقع (name)
-  النشاط (activity)
-  المساحة المطروحة (area) in م²
-  سعر الدلو (buckletPrice) in ريال
-  مدة العقد (contractPeriod)
-  رقم الفرصة (forsaNumber)
-  تاريخ الإعلان (advertiseDate, epoch ms → Arabic date string)
-  تاريخ فتح المظاريف (openEnvelopesDate, epoch ms → Arabic date string)
-  رابط فرصة فرص (forusLink, clickable link)
+ADDITIONAL section only for rent_1 === 'قيد الطرح':
+  اسم الموقع (name), النشاط (activity), المساحة المطروحة (area),
+  سعر كراسة الشروط (buckletPrice), مدة العقد (contractPeriod),
+  رقم الفرصة (forsaNumber), تاريخ الإعلان (advertiseDate, epoch ms),
+  تاريخ فتح المظاريف (openEnvelopesDate, epoch ms),
+  رابط فرصة فرص (forusLink)
+
+The .NET template replaced the common table wholesale for قيد الطرح plots,
+dropping رقم القطعة / الحي / الحالة / المساحة / ملاحظات. It is now genuinely
+additive, per this spec.
+
+Content is built as DOM nodes, not interpolated HTML. forusLink is scheme-checked
+(http/https only) and all text goes through textContent.
 
 🎛️ Filters Sidebar
-  District (dis_nam_1) → dropdown
-  Main Activity (main_act_1) → dropdown
-  Sub Activity (sub_acti_1) → dropdown
+  District (dis_nam_1), Main Activity (main_act_1), Sub Activity (sub_acti_1)
+  → dropdowns populated from meta.json
   Area (Shape_Area) → min/max number inputs
 
 🔍 Filtering Logic
-Client sends filter state; server filters in FilterPlots()
-GET /api/plots?rent=VALUE for single rent filter (no other filters)
-POST /api/plots/filter for multi-criteria filtering
+All client-side, in dist/js/filters.js — a direct port of PlotService.FilterPlots.
+Verified against the live .NET API across 211 filter combinations (exhaustive over
+every district and activity, plus multi-criteria conjunctions and edge cases):
+OBJECTID sets matched exactly in every case. ~0.2 ms per filter vs 84 ms per
+server round trip.
 
-🚀 API Endpoints
-GET /api/plots/rent-summary       → List<RentSummaryItem>
-GET /api/plots?rent=VALUE         → List<PlotDto>
-POST /api/plots/filter            → List<PlotDto>  (body: FilterCriteria)
-GET /api/plots/districts          → List<string>
-GET /api/plots/main-activities    → List<string>
-GET /api/plots/sub-activities     → List<string>
-GET /api/plots/area-range         → { min, max }
+filters.js is pure and DOM-free on purpose, so it can be tested under Node.
 
-⚡ Performance Considerations
-Singleton PlotService — JSON loaded once on startup
-UTM→WGS84 conversion done per request in ToDto (not cached)
-Consider pre-converting and caching if performance is a concern
-
-🎨 UI Requirements (Arabic UI, dir="rtl")
-No navbar — app fills full viewport height
-Dashboard section: compact cards (44px icon, 1.5rem count font), responsive grid
-Map section: full remaining height, collapsible right sidebar
-
-⚠️ Edge Cases
-rent_1 = null/empty
-Missing geometry rings (falls back to x_12/y_23 coordinates)
-Invalid polygon rings
-Empty filter results
-قيد الطرح extra fields may be null for some records
+⚠️ Edge Cases / Known Data Characteristics
+  - 48 of 4592 records never draw (no geometry). OBJECTID 4978 has fallback
+    x_12/y_23 coordinates but no rings, so it still produces no polygon — the
+    documented fallback path is functionally dead.
+  - The results count reflects matching RECORDS, not drawn polygons.
+  - OBJECTID 5549 and 5767 have a negative Shape_Area (reversed ring winding
+    upstream). Raw values are preserved; they are excluded from the advertised
+    filter range and listed under meta.anomalies. The .NET app advertised a
+    -9190 m² minimum in the sidebar as a result.
+  - The source is full of whitespace-only strings (3287 for notes_1, 397 for
+    location_1). These are treated as empty; otherwise a bare " " appears as a
+    blank dropdown option. This is the one intentional divergence from the .NET
+    behaviour, which offered " " as a selectable district/activity.
+  - 5 plots in طريق طريف sit ~120 km west of Arar. Real data, not corruption.
+  - قيد الطرح extra fields are absent (not null) on the other 4548 records.
 
 ✅ Definition of Done
-Home page shows correct counts per rent category
-Clicking a card filters the map in-place and highlights the active card
-Polygons render with correct color per rent status
-Filters sidebar dynamically updates results
-Clicking polygon shows full attributes
-قيد الطرح polygons show tender-specific section in info window
+  Dashboard shows 2584 / 1964 / 44
+  Clicking a card filters in place and highlights it
+  Polygons render with the correct colour per rent status
+  Filters update results without a network request
+  Clicking a polygon shows full attributes
+  قيد الطرح polygons additionally show the tender section
+  tools/test-map.html passes all 26 checks

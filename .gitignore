@@ -1,0 +1,16 @@
+# Build tooling (tools/build-data.mjs)
+node_modules/
+
+# Secrets — the OpenRouter key lives ONLY in the serverless function's
+# environment. Locally it sits in .env; in production it is set in the Vercel
+# dashboard (Settings -> Environment Variables). It must never be committed, and
+# it must never ship to the browser.
+.env
+.env.*
+!.env.example
+
+# Vercel local state
+.vercel/
+
+# Generated data artifacts are intentionally NOT ignored — dist/data/*.json is
+# committed so the static site can be deployed without running the build.

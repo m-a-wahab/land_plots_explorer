@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -m 5 http://localhost:5199/api/plots/districts)",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>console.log\\('server districts:',JSON.parse\\(d\\).length\\)\\)\")",
+      "Bash(curl -s -m 5 http://localhost:5199/api/plots/rent-summary)",
+      "Bash(taskkill //F //IM LandPlotsExplorer.exe)",
+      "Bash(sed -i \"s/el.totalPlots.textContent = meta.totalPlots.toLocaleString\\('ar-EG'\\);/el.totalPlots.textContent = String\\(meta.totalPlots\\);/\" js/app.js)",
+      "Bash(sed -i \"s/el.resultsCount.textContent = results.length.toLocaleString\\('ar-EG'\\);/el.resultsCount.textContent = String\\(results.length\\);/\" js/app.js)",
+      "Bash(node tools/verify-filters.mjs)",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(taskkill //F //IM python.exe)"
+    ]
+  }
+}
