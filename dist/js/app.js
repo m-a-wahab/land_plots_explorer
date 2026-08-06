@@ -389,9 +389,21 @@ async function init() {
 
   // An explicit "الكل" card: previously the only way to clear a rent filter was
   // to click the active card a second time, which nothing communicated.
+  // TEMPORARY: display-only count overrides for two rent categories, requested
+  // manually. The data, the map and the filters are untouched — only the number
+  // printed on the card changes. Delete this block to go back to real counts.
+  const CARD_COUNT_OVERRIDES = {
+    'غير مؤجر': 2697,
+    'مؤجر': 1895,
+    'قيد الطرح': 44,
+  };
+
   const cards = [
     { key: '', label: 'الكل', count: meta.totalPlots, color: '#64748b' },
-    ...meta.rentSummary,
+    ...meta.rentSummary.map((item) =>
+      item.key in CARD_COUNT_OVERRIDES
+        ? { ...item, count: CARD_COUNT_OVERRIDES[item.key] }
+        : item),
   ];
   renderCards(el.cardsGrid, cards, selectRent);
   renderLegend(el.legend, meta.rentSummary);
