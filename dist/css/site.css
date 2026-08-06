@@ -872,6 +872,12 @@ main {
   overflow: hidden;
 }
 
+/* .chat-panel sets display:flex, which would otherwise beat the UA
+   [hidden] { display: none } rule and leave the panel open on load. */
+.chat-panel[hidden] {
+  display: none;
+}
+
 .chat-header {
   display: flex;
   align-items: center;
